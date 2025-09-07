@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RonTra — 커뮤니티 만들기</title>
+  <link rel="stylesheet" href="../assets/css/style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="brand">RonTra</div>
+    <nav class="nav" aria-label="주 메뉴">
+      <a href="../index.html">시작하기</a>
+      <a href="./" class="active">커뮤니티 만들기</a>
+      <a href="../settings/">설정</a>
+    </nav>
+    <div class="header-right">
+      <button id="notifBtn" class="icon-btn" title="알림">🔔</button>
+      <button id="profileBtn" class="icon-btn" title="프로필">👤</button>
+      <button id="authBtn" class="btn">로그인</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2>모든 커뮤니티</h2>
+      <div>
+        <button id="openCreate" class="btn">커뮤니티 생성</button>
+      </div>
+    </div>
+
+    <section class="community-grid" id="communityGrid">
+      <!-- community cards -->
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="inner">
+      <div>
+        <div class="logo">BANBLE LEON</div>
+        <div class="small" style="margin-top:8px">
+          <a class="small" href="#">이용약관</a> · <a class="small" href="#">법적 책임 고지</a> · <a class="small" href="#">개인정보처리방침</a>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div class="small">BANBLE LEON TEAM © 2024. All rights reserved.</div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Fullscreen modal (not covering header/footer) -->
+  <div id="createModal" class="fullscreen-modal" role="dialog" aria-modal="true">
+    <h3>새 커뮤니티 만들기</h3>
+    <div style="display:flex;gap:12px">
+      <div style="flex:1">
+        <label class="small">배너 업로드</label>
+        <img id="bannerPreview" class="preview" alt="배너 미리보기" />
+        <input id="bannerFile" class="file-input" type="file" accept="image/*" />
+        <div class="small">권장 크기: 1200x360 (비율만 맞추면 됨)</div>
+      </div>
+      <div style="flex:1">
+        <label class="small">커뮤니티 이름</label>
+        <input id="commName" class="input" placeholder="커뮤니티 이름을 입력하세요" />
+        <label class="small" style="margin-top:8px">최대 가입자 수</label>
+        <input id="capacity" class="input" type="number" min="1" value="100" />
+        <label class="small" style="margin-top:8px">가입 신청 기능 사용</label>
+        <div><input id="requiresApproval" type="checkbox" /> 가입 요청을 수락 후 승인</div>
+        <label class="small" style="margin-top:8px">공개 여부</label>
+        <div><input id="isPublic" type="checkbox" checked /> 공개 커뮤니티로 설정</div>
+        <label class="small" style="margin-top:8px">설명</label>
+        <textarea id="description" class="input" rows="6" placeholder="커뮤니티 소개"></textarea>
+
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button id="createBtn" class="btn">생성</button>
+          <button id="cancelCreate" class="btn">취소</button>
+        </div>
+        <div id="createStatus" class="small" style="margin-top:8px"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { auth, db, storage } from '../assets/js/firebase-init.js';
+    import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js';
+    import { ref, uploadBytesResumable, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-storage.js';
+    import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js';
+
+    const communityGrid = document.getElementById('communityGrid');
+    const openCreate = document.getElementById('openCreate');
+    const createModal = document.getElementById('createModal');
+    const bannerFile = document.getElementById('bannerFile');
+    const bannerPreview = document.getElementById('bannerPreview');
+    const commName = document.getElementById('commName');
+    const capacity = document.getElementById('capacity');
+    const requiresApproval = document.getElementById('requiresApproval');
+    const isPublic = document.getElementById('isPublic');
+    const description = document.getElementById('description');
+    const createBtn = document.getElementById('createBtn');
+    const cancelCreate = document.getElementById('cancelCreate');
+    const createStatus = document.getElementById('createStatus');
+
+    let currentUser = null;
+    onAuthStateChanged(auth, user => {
+      currentUser = user;
+      // show/hide create button depending on auth (optional)
+      openCreate.disabled = !user;
+      openCreate.title = user ? '' : '로그인 후 사용 가능합니다';
+    });
+
+    openCreate.addEventListener('click', ()=> {
+      createModal.classList.add('open');
+      window.scrollTo({top:0,behavior:'smooth'});
+    });
+    cancelCreate.addEventListener('click', ()=> {
+      createModal.classList.remove('open');
+    });
+
+    // preview banner
+    bannerFile.addEventListener('change', ()=> {
+      const f = bannerFile.files[0];
+      if(!f) return;
+      const url = URL.createObjectURL(f);
+      bannerPreview.src = url;
+    });
+
+    // load communities
+    const q = query(collection(db,'communities'), orderBy('createdAt','desc'));
+    onSnapshot(q, snap => {
+      communityGrid.innerHTML = '';
+      snap.forEach(doc => {
+        const d = doc.data();
+        const card = document.createElement('div');
+        card.className = 'community-card-large';
+        card.innerHTML = `
+          <div style="height:140px;overflow:hidden;background:#051018">
+            <img src="${d.bannerURL || ''}" alt="" class="banner-preview" />
+          </div>
+          <div class="meta">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-weight:800">${d.name}</div>
+                <div class="small">${d.memberCount || 0}명 · ${d.isPublic ? '공개' : '비공개'}</div>
+              </div>
+              <div>
+                <button class="btn" data-id="${doc.id}">입장</button>
+              </div>
+            </div>
+            <div class="small" style="margin-top:8px">${d.description || ''}</div>
+          </div>
+        `;
+        card.querySelector('button.btn').addEventListener('click', ()=>{
+          window.location.href = '../community.html?id=' + doc.id;
+        });
+        communityGrid.appendChild(card);
+      });
+    });
+
+    // create community: upload banner then add doc
+    createBtn.addEventListener('click', async ()=>{
+      if(!currentUser){ alert('로그인 후 생성하세요'); return; }
+      const name = commName.value.trim();
+      if(!name){ alert('커뮤니티 이름을 입력하세요'); return; }
+      createBtn.disabled = true;
+      createStatus.textContent = '업로드 및 생성 중...';
+      try {
+        let bannerURL = '';
+        const f = bannerFile.files[0];
+        if(f){
+          const path = 'community_banners/' + Date.now() + '_' + f.name;
+          const sRef = ref(storage, path);
+          const task = uploadBytesResumable(sRef, f);
+          await new Promise((res, rej) => {
+            task.on('state_changed', null, err=> rej(err), ()=> res());
+          });
+          bannerURL = await getDownloadURL(sRef);
+        }
+        const docRef = await addDoc(collection(db,'communities'), {
+          name,
+          bannerURL,
+          capacity: Number(capacity.value) || 0,
+          requiresApproval: !!requiresApproval.checked,
+          isPublic: !!isPublic.checked,
+          description: description.value || '',
+          ownerId: currentUser.uid,
+          memberCount: 1,
+          createdAt: serverTimestamp()
+        });
+        createStatus.textContent = '생성 완료. 커뮤니티로 이동합니다...';
+        setTimeout(()=> {
+          window.location.href = '../community.html?id=' + docRef.id;
+        }, 900);
+      } catch (err) {
+        console.error(err);
+        createStatus.textContent = '오류: ' + err.message;
+      } finally {
+        createBtn.disabled = false;
+      }
+    });
+
+    // Simple auth UI from header for quick usage (duplicate from index)
+    const authBtn = document.getElementById('authBtn');
+    authBtn.addEventListener('click', ()=> {
+      // open a small auth form by redirecting to root where modal exists
+      window.location.href = '../index.html';
+    });
+
+  </script>
+</body>
+</html>

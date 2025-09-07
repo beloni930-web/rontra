@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RonTra — 설정</title>
+  <link rel="stylesheet" href="../assets/css/style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="brand">RonTra</div>
+    <nav class="nav" aria-label="주 메뉴">
+      <a href="../index.html">시작하기</a>
+      <a href="../create/">커뮤니티 만들기</a>
+      <a href="./" class="active">설정</a>
+    </nav>
+    <div class="header-right">
+      <button id="notifBtn" class="icon-btn" title="알림">🔔</button>
+      <button id="profileBtn" class="icon-btn" title="프로필">👤</button>
+      <button id="authBtn" class="btn">로그인</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="card">
+      <h3>내 프로필 편집</h3>
+      <div style="display:flex;gap:12px;align-items:center">
+        <img id="avatarPreview" src="" alt="avatar" style="width:96px;height:96px;border-radius:12px;object-fit:cover;background:#081018" />
+        <div style="flex:1">
+          <input id="displayName" class="input" placeholder="표시 이름" />
+          <div style="margin-top:8px">
+            <input id="avatarFile" type="file" accept="image/*" />
+            <button id="uploadAvatar" class="btn">업로드</button>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:12px">
+        <button id="saveProfile" class="btn">저장</button>
+        <button id="signOut" class="btn">로그아웃</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>내가 만든 커뮤니티</h3>
+      <div id="ownedList"></div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="inner">
+      <div>
+        <div class="logo">BANBLE LEON</div>
+        <div class="small" style="margin-top:8px">
+          <a class="small" href="#">이용약관</a> · <a class="small" href="#">법적 책임 고지</a> · <a class="small" href="#">개인정보처리방침</a>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div class="small">BANBLE LEON TEAM © 2024. All rights reserved.</div>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module">
+    import { auth, db, storage } from '../assets/js/firebase-init.js';
+    import { ref, uploadBytesResumable, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-storage.js';
+    import { updateProfile, onAuthStateChanged, signOut as fbSignOut } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js';
+    import { collection, query, where, onSnapshot, orderBy, doc, deleteDoc } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js';
+
+    const avatarPreview = document.getElementById('avatarPreview');
+    const avatarFile = document.getElementById('avatarFile');
+    const uploadAvatar = document.getElementById('uploadAvatar');
+    const displayName = document.getElementById('displayName');
+    const saveProfile = document.getElementById('saveProfile');
+    const signOutBtn = document.getElementById('signOut');
+    const ownedList = document.getElementById('ownedList');
+
+    let currentUser = null;
+    onAuthStateChanged(auth, user => {
+      currentUser = user;
+      if(user){
+        displayName.value = user.displayName || '';
+        avatarPreview.src = user.photoURL || '';
+        // load owned communities
+        const q = query(collection(db,'communities'), where('ownerId','==', user.uid), orderBy('createdAt','desc'));
+        onSnapshot(q, snap => {
+          ownedList.innerHTML = '';
+          snap.forEach(docSnap => {
+            const d = docSnap.data();
+            const el = document.createElement('div');
+            el.className = 'list-item';
+            el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
+              <div><strong>${d.name}</strong><div class="small">${d.memberCount || 0}명</div></div>
+              <div>
+                <button class="btn" data-id="${docSnap.id}">관리</button>
+                <button class="btn" data-delete="${docSnap.id}">삭제</button>
+              </div>
+            </div>`;
+            el.querySelector('button[data-id]').addEventListener('click', ()=>{
+              window.location.href = '../community.html?id=' + docSnap.id;
+            });
+            el.querySelector('button[data-delete]').addEventListener('click', async ()=>{
+              if(!confirm('정말 삭제하시겠습니까? (복구 불가)')) return;
+              try {
+                await deleteDoc(doc(db,'communities', docSnap.id));
+                alert('삭제되었습니다.');
+              } catch (err) { alert('삭제 오류: ' + err.message); }
+            });
+            ownedList.appendChild(el);
+          });
+        });
+      } else {
+        displayName.value = '';
+        avatarPreview.src = '';
+        ownedList.innerHTML = '<div class="small">로그인 후 내 커뮤니티를 관리할 수 있습니다.</div>';
+      }
+    });
+
+    avatarFile.addEventListener('change', ()=> {
+      const f = avatarFile.files[0];
+      if(f) avatarPreview.src = URL.createObjectURL(f);
+    });
+
+    uploadAvatar.addEventListener('click', async ()=>{
+      if(!currentUser){ alert('로그인 후 사용하세요'); return; }
+      const f = avatarFile.files[0];
+      if(!f){ alert('업로드할 이미지를 선택하세요'); return; }
+      const path = 'avatars/' + currentUser.uid + '_' + Date.now() + '_' + f.name;
+      const sRef = ref(storage, path);
+      const task = uploadBytesResumable(sRef, f);
+      try {
+        await new Promise((res, rej) => task.on('state_changed', null, err=> rej(err), ()=> res()));
+        const url = await getDownloadURL(sRef);
+        await updateProfile(currentUser, { photoURL: url });
+        alert('아바타 업로드 및 프로필 업데이트 완료');
+      } catch (err) {
+        alert('업로드 오류: ' + err.message);
+      }
+    });
+
+    saveProfile.addEventListener('click', async ()=> {
+      if(!currentUser){ alert('로그인 후 사용하세요'); return; }
+      try {
+        await updateProfile(currentUser, { displayName: displayName.value || null });
+        alert('프로필 저장 완료');
+      } catch (err) {
+        alert('저장 오류: ' + err.message);
+      }
+    });
+
+    signOutBtn.addEventListener('click', async ()=> {
+      await fbSignOut(auth);
+      window.location.href = '../index.html';
+    });
+
+    // header auth shortcut
+    const authBtn = document.getElementById('authBtn');
+    authBtn.addEventListener('click', ()=> {
+      window.location.href = '../index.html';
+    });
+
+  </script>
+</body>
+</html>
